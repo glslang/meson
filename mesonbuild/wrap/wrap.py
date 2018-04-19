@@ -142,8 +142,8 @@ class Resolver:
         if p.type == 'file':
             if not os.path.isdir(self.cachedir):
                 os.mkdir(self.cachedir)
-            self.download(p, packagename)
-            self.extract_package(p)
+            extract_source, extract_patch = self.download(p, packagename)
+            self.extract_package(p, extract_source, extract_patch)
         elif p.type == 'git':
             self.get_git(p)
         elif p.type == "hg":
@@ -312,6 +312,7 @@ class Resolver:
         return hashvalue
 
     def download(self, p, packagename):
+        extract_source, extract_patch = False, False
         ofname = os.path.join(self.cachedir, p.get('source_filename'))
         if os.path.exists(ofname):
             mlog.log('Using', mlog.bold(packagename), 'from cache.')
@@ -324,6 +325,7 @@ class Resolver:
                 os.remove(tmpfile)
                 raise RuntimeError('Incorrect hash for source %s:\n %s expected\n %s actual.' % (packagename, expected, dhash))
             os.rename(tmpfile, ofname)
+            extract_source = True
         if p.has_patch():
             patch_filename = p.get('patch_filename')
             filename = os.path.join(self.cachedir, patch_filename)
@@ -338,8 +340,10 @@ class Resolver:
                     os.remove(tmpfile)
                     raise RuntimeError('Incorrect hash for patch %s:\n %s expected\n %s actual' % (packagename, expected, phash))
                 os.rename(tmpfile, filename)
+                extract_patch = True
         else:
             mlog.log('Package does not require patch.')
+        return extract_source, extract_patch
 
     def copy_tree(self, root_src_dir, root_dst_dir):
         """
@@ -360,7 +364,7 @@ class Resolver:
                         os.remove(dst_file)
                 shutil.copy2(src_file, dst_dir)
 
-    def extract_package(self, package):
+    def extract_package(self, package, extract_source, extract_patch):
         if sys.version_info < (3, 5):
             try:
                 import lzma # noqa: F401
@@ -373,8 +377,6 @@ class Resolver:
                 except shutil.RegistryError:
                     pass
         target_dir = os.path.join(self.subdir_root, package.get('directory'))
-        if os.path.isdir(target_dir):
-            return
         extract_dir = self.subdir_root
         # Some upstreams ship packages that do not have a leading directory.
         # Create one for them.
@@ -382,10 +384,11 @@ class Resolver:
             package.get('lead_directory_missing')
             os.mkdir(target_dir)
             extract_dir = target_dir
-        except KeyError:
+        except (KeyError, FileExistsError):
             pass
-        shutil.unpack_archive(os.path.join(self.cachedir, package.get('source_filename')), extract_dir)
-        if package.has_patch():
+        if extract_source:
+            shutil.unpack_archive(os.path.join(self.cachedir, package.get('source_filename')), extract_dir)
+        if extract_patch and package.has_patch():
             try:
                 shutil.unpack_archive(os.path.join(self.cachedir, package.get('patch_filename')), self.subdir_root)
             except Exception:
